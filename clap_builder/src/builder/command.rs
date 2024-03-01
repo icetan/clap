@@ -1358,6 +1358,37 @@ impl Command {
         }
     }
 
+    /// Specifies to use the help_template of the current command for all [`subcommands`].
+    ///
+    /// Defaults to `false`; subcommands have independent help_template strings from their parents.
+    ///
+    /// **NOTE:** This choice is propagated to all child subcommands.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use clap_builder as clap;
+    /// # use clap::{Command, Arg};
+    /// Command::new("myprog")
+    ///     .version("v1.1")
+    ///     .help_template("{bin} {version}")
+    ///     .propagate_help_template(true)
+    ///     .subcommand(Command::new("test"))
+    ///     .get_matches();
+    /// // running `$ myprog test --help` will display
+    /// // "myprog-test v1.1"
+    /// ```
+    ///
+    /// [`subcommands`]: crate::Command::subcommand()
+    #[inline]
+    pub fn propagate_help_template(self, yes: bool) -> Self {
+        if yes {
+            self.global_setting(AppSettings::PropagateHelpTemplate)
+        } else {
+            self.unset_global_setting(AppSettings::PropagateHelpTemplate)
+        }
+    }
+
     /// Places the help string for all arguments and subcommands on the line after them.
     ///
     /// **NOTE:** This choice is propagated to all child subcommands.
@@ -3790,6 +3821,11 @@ impl Command {
         self.is_set(AppSettings::PropagateVersion)
     }
 
+    /// Report whether [`Command::propagate_help_template`] is set
+    pub fn is_propagate_help_template_set(&self) -> bool {
+        self.is_set(AppSettings::PropagateHelpTemplate)
+    }
+
     /// Report whether [`Command::next_line_help`] is set
     pub fn is_next_line_help_set(&self) -> bool {
         self.is_set(AppSettings::NextLineHelp)
@@ -4420,6 +4456,12 @@ impl Command {
                 }
                 if let Some(long_version) = self.long_version.as_ref() {
                     sc.long_version.get_or_insert_with(|| long_version.clone());
+                }
+            }
+
+            if self.settings.is_set(AppSettings::PropagateHelpTemplate) {
+                if let Some(template) = self.template.as_ref() {
+                    sc.template.get_or_insert_with(|| template.clone());
                 }
             }
 
