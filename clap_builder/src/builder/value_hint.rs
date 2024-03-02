@@ -65,6 +65,8 @@ pub enum ValueHint {
     Url,
     /// Email address.
     EmailAddress,
+    /// Dynamic values.
+    Dynamic (fn(&str) -> Option<Vec<String>>),
 }
 
 impl FromStr for ValueHint {

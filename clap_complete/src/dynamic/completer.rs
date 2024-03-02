@@ -51,16 +51,42 @@ pub fn complete(
     }
 
     let mut current_cmd = &*cmd;
+    let mut current_arg: Option<clap::Arg> = None;
     let mut pos_index = 1;
     let mut is_escaped = false;
     while let Some(arg) = raw_args.next(&mut cursor) {
         if cursor == target_cursor {
-            return complete_arg(&arg, current_cmd, current_dir, pos_index, is_escaped);
+            return complete_arg(
+                &arg,
+                current_cmd,
+                current_arg.as_ref(),
+                current_dir,
+                pos_index,
+                is_escaped,
+            );
         }
 
         debug!("complete::next: Begin parsing '{:?}'", arg.to_value_os(),);
 
-        if let Ok(value) = arg.to_value() {
+        if let Some(_long) = arg.to_long() {
+            if let Ok(long) = _long.0 {
+                if let Some(next_arg) = find_cmd_arg_long(current_cmd, long) {
+                    current_arg = Some(next_arg);
+                    pos_index = 1;
+                    continue;
+                }
+            }
+        } else if let Some(_short) = arg.to_short() {
+            if let Some(short) = _short.clone().next() {
+                if let Ok(short) = short {
+                    if let Some(next_arg) = find_cmd_arg_short(current_cmd, short) {
+                        current_arg = Some(next_arg);
+                        pos_index = 1;
+                        continue;
+                    }
+                }
+            }
+        } else if let Ok(value) = arg.to_value() {
             if let Some(next_cmd) = current_cmd.find_subcommand(value) {
                 current_cmd = next_cmd;
                 pos_index = 1;
@@ -88,14 +114,16 @@ pub fn complete(
 fn complete_arg(
     arg: &clap_lex::ParsedArg<'_>,
     cmd: &clap::Command,
+    current_arg: Option<&clap::Arg>,
     current_dir: Option<&std::path::Path>,
     pos_index: usize,
     is_escaped: bool,
 ) -> Result<Vec<(std::ffi::OsString, Option<StyledStr>)>, std::io::Error> {
     debug!(
-        "complete_arg: arg={:?}, cmd={:?}, current_dir={:?}, pos_index={}, is_escaped={}",
+        "complete_arg: arg={:?}, cmd={:?}, current_arg={:?}, current_dir={:?}, pos_index={}, is_escaped={}",
         arg,
         cmd.get_name(),
+        current_arg,
         current_dir,
         pos_index,
         is_escaped
@@ -103,6 +131,15 @@ fn complete_arg(
     let mut completions = Vec::new();
 
     if !is_escaped {
+        if let Some(argument) = current_arg {
+            if let Some(num) = argument.get_num_args() {
+                if num.max_values() >= pos_index {
+                    completions.extend(complete_arg_value(arg.to_value(), argument, current_dir));
+                    return Ok(completions);
+                }
+            }
+        }
+
         if let Some((flag, value)) = arg.to_long() {
             if let Ok(flag) = flag {
                 if let Some(value) = value {
@@ -199,6 +236,18 @@ fn complete_arg_value(
                 use is_executable::IsExecutable;
                 values.extend(complete_path(value_os, current_dir, |p| p.is_executable()));
             }
+            clap::ValueHint::Dynamic(func) => {
+                if let Some(input) = value_os.to_str() {
+                    if let Some(vals) = func(input) {
+                        values.extend(
+                            vals
+                                .into_iter()
+                                .map(|x| (OsString::from(x), None))
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                }
+            }
             clap::ValueHint::CommandName
             | clap::ValueHint::CommandString
             | clap::ValueHint::CommandWithArguments
@@ -275,7 +324,7 @@ fn complete_subcommand(value: &str, cmd: &clap::Command) -> Vec<(OsString, Optio
         value
     );
 
-    let mut scs = subcommands(cmd)
+    let mut scs = visible_subcommands(cmd)
         .into_iter()
         .filter(|x| x.0.starts_with(value))
         .map(|x| (OsString::from(&x.0), x.1))
@@ -331,11 +380,35 @@ fn possible_values(a: &clap::Arg) -> Option<Vec<clap::builder::PossibleValue>> {
 ///
 /// Subcommand `rustup toolchain install` would be converted to
 /// `("install", "rustup toolchain install")`.
-fn subcommands(p: &clap::Command) -> Vec<(String, Option<StyledStr>)> {
+fn visible_subcommands(p: &clap::Command) -> Vec<(String, Option<StyledStr>)> {
     debug!("subcommands: name={}", p.get_name());
     debug!("subcommands: Has subcommands...{:?}", p.has_subcommands());
 
     p.get_subcommands()
-        .map(|sc| (sc.get_name().to_string(), sc.get_about().cloned()))
+        .filter_map(|sc| if sc.is_hide_set() {
+            None
+        } else {
+            Some((sc.get_name().to_string(), sc.get_about().cloned()))
+        })
         .collect()
+}
+
+fn find_cmd_arg_long(cmd: &clap::Command, value: &str) -> Option<clap::Arg> {
+    cmd.get_arguments()
+        .find(|a| if let Some(long) = a.get_long() {
+            long == value
+        } else {
+            false
+        })
+        .cloned()
+}
+
+fn find_cmd_arg_short(cmd: &clap::Command, value: char) -> Option<clap::Arg> {
+    cmd.get_arguments()
+        .find(|a| if let Some(short) = a.get_short() {
+            short == value
+        } else {
+            false
+        })
+        .cloned()
 }
